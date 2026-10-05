@@ -1,0 +1,843 @@
+================================================================================
+ EZ_SIMBS - SEED DATA GUIDE FOR MANUAL FEATURE TESTING
+================================================================================
+
+  Files:
+    ez_simbs_seed_data.sql  the dataset (40 tables, 660 + 7 + 18 extra rows)
+    SEED_DATA.txt           this guide
+    assets/images/products/seed-01.svg .. seed-20.svg   product images
+
+ HOW TO LOAD
+-----------
+   mysql -u aj -p ez_simbs < ez_simbs_seed_data.sql
+
+ The script is NOT idempotent (plain INSERTs). Running it twice will fail on
+ the primary keys. To re-seed cleanly, run the commented "REMOVE SEED DATA"
+ block at the bottom of ez_simbs_seed_data.sql first - it deletes only ids
+ 1001-1020, never any pre-existing row.
+
+ All seeded rows are verified by queries at the bottom of the SQL file. All of
+ them currently return clean results (see VERIFICATION at the bottom).
+
+================================================================================
+ 1. LOGIN CREDENTIALS
+================================================================================
+
+ Password for EVERY seeded account:  admin123
+
+ Role-gate logins (the 5 built-in roles, use these to test access control)
+ ------------------------------------------------------------------------------
+   Email                        Role            Store  Branch  Notes
+   ---------------------------  --------------  -----  ------  -------------------
+   seed.admin@ezsimbs.test      admin (1)       1      1      Full access
+   seed.manager@ezsimbs.test    manager (2)     1      2      No user admin
+   seed.branch@ezsimbs.test     branch_mgr (3)  1      3      Branch scoped
+   seed.cashier@ezsimbs.test    cashier (4)     1      1      POS only
+   seed.customer@ezsimbs.test   customer (5)    1      -      Storefront only
+
+ Tenancy logins (multi-store testing, store_id 1001-1008)
+ ------------------------------------------------------------------------------
+   arif@sunrise.test        Arif Hossain      role 1001 store_owner_admin  store 1001
+   nusrat@blueocean.test    Nusrat Jahan      role 1002   store_supervisor  store 1002
+   rakib@greenleaf.test     Rakib Hasan       role 1002   store_supervisor  store 1003
+   tanvir@starelec.test     Tanvir Ahmed      role 1003 inventory_auditor  store 1004
+   sadia@cityfresh.test     Sadia Islam       role 1004   warehouse_operator store 1005
+   mahmudul@apex.test       Mahmudul Hasan    role 1003 inventory_auditor  store 1006
+   farhana@silver.test      Farhana Akter     role 1005   purchase_officer  store 1007
+   kamrul@metro.test        Kamrul Islam      role 1004   warehouse_operator store 1008
+   rehana@sunrise.test      Rehana Parvin     role 1008   senior_cashier     store 1001
+   imran@sunrise.test       Imran Kabir       role 1004   warehouse_operator store 1001
+   sumaiya@sunrise.test     Sumaiya Akter     role 1005   purchase_officer  store 1001
+   mehedi@seed.test         Mehedi Hasan      role 1009   junior_cashier     store 1001
+
+ Special account states (auth edge cases)
+ ------------------------------------------------------------------------------
+   users.id  Email                          Status   Expected behaviour
+   --------  -----------------------------  -------  ---------------------------
+   1018      inactive.user@ezsimbs.test     inactive Login is refused ("inactive")
+   1019      locked.user@ezsimbs.test       locked   Refused until lockout_until
+                                                    (2026-09-28 12:00:00) passes
+   1020      recovery.user@ezsimbs.test     active   lockout_until is in the PAST
+                                                    (2026-09-05 09:45:00), so the
+                                                    3 failed_attempts are stale and
+                                                    the user can log in normally.
+
+ Test with:
+   - lockout: 5 wrong passwords on locked.user@ezsimbs.test before 2026-09-28 12:00
+   - recovery: any password attempt on recovery.user@ezsimbs.test (should work)
+   - inactivity: inactive.user@ezsimbs.test (should be blocked)
+
+================================================================================
+ 2. ID MAP - 1001-1020 IN EVERY TABLE
+================================================================================
+
+ stores          1001-1020  20 tenants (free/pro, active/pending/suspended)
+ roles           1001-1020  20 custom roles on top of the 5 built-ins
+ permissions     1001-1020  1 permission per custom role
+ branches        1001-1020  20 branches
+ users           1001-1020  20 users
+ user_sessions   1001-1020  20 sessions (live / expired / remember-me)
+ categories      1001-1020  20 categories (parent + child hierarchy)
+ brands          1001-1020  20 brands (19 active, 1 inactive)
+ units           1001-1020  20 units
+ products        1001-1020  20 products
+ suppliers       1001-1020  20 suppliers
+ customers       1001-1020  20 customers
+ purchases       1001-1020  20 purchase orders
+ purchase_items  1001-1020  20 PO lines
+ purchase_payments 1001-1020 20 PO payment rows
+ sales           1001-1020  20 POS sales
+ sale_items      1001-1022  22 sale lines (20 + 2 split lines of sale 1009)
+ sale_payments   1001-1020  20 payment rows (2 mixed sales split in 2)
+ sale_returns    1001-1020  20 customer returns (Phase-13)
+ sale_return_items 1001-1022 22 return lines (20 + 2 extra of return 1011)
+ sale_return_payments 1001-1012 12 refund rows (only refunded returns pay)
+ return_photos   1001-1020  20 return photos
+ inventory       1001-1020  20 stock rows
+ stock_logs      1001-1023  23 stock movements (20 + 3 return restocks)
+ invoices        1001-1020  20 invoice records
+ notifications    1001-1020  20 notifications
+ activity_logs   1001-1020  20 audit entries
+ settings        1001-1020  20 settings (all keys SEED_*)
+ banners         1001-1020  20 banners (ALL inactive by design)
+ product_gallery 1001-1020  20 gallery images
+ wishlist        1001-1020  20 saved products
+ cart            1001-1020  20 carts (1 per seeded user)
+ cart_items      1001-1020  20 cart lines (across 5 active carts)
+ product_reviews 1001-1020  20 reviews
+ coupons         1001-1020  20 coupons
+ orders          1001-1020  20 storefront orders
+ order_items     1001-1020  20 order lines
+
+ Total: 660 rows in the 1001-1020 window plus 7 deliberate extras (1021-1023).
+
+================================================================================
+ 3. TENANTS AND BRANCHES
+================================================================================
+
+ STORES
+   1001 Sunrise Mega Mart         pro      active     <- parent of branches 1005-1007
+   1002 Blue Ocean Superstore     pro      active     <- parent of branches 1008-1009
+   1003 Green Leaf Grocery        free     active     <- parent of branches 1010-1011
+   1004 Star Electronics          pro      active     <- parent of branches 1012-1013
+   1005 City Fresh Market         free     active     <- parent of branch 1014
+   1006 Apex Hardware             pro      pending    <- parent of branch 1015
+   1007 Silver Fashion House      free     active     <- parent of branch 1016
+   1008 Metro Pharmacy            pro      active     <- parent of branch 1017
+   1009 Sunrise Outlet Gulshan    free     active
+   1010 Sunrise Outlet Uttara     free     suspended
+   1011 Blue Ocean Outlet Sylhet  free     active
+   1012 Green Leaf Outlet Mirpur  free     pending
+   1013 Star Electronics Lalmatia free     active
+   1014 City Fresh Express        free     active
+   1015 Apex Hardware Bogura      free     active
+   1016 Silver Fashion Khulna     free     suspended
+   1017 Metro Pharmacy Tongi      free     active
+   1018 Sunrise Warehouse         pro      active     <- parent of branch 1018
+   1019 Test Suspended Store      free     suspended
+   1020 Test Pending Store        free     pending
+
+ BRANCHES 1001-1004 BELONG TO STORE 1 (the live "EZ SIMBS Demo Store")
+   These are deliberately on store 1 so admin@ezsimbs.local can see them in
+   the Multi-Branch views and the inventory branch selector without having to
+   switch tenant context.
+
+   1001 Banani Outlet              store 1    manager 9   (Branch Manager)
+   1002 Uttara Outlet              store 1    manager 9   (Branch Manager)
+   1003 Warehouse (Main)           store 1    manager 8   (Manager)
+   1004 Old Closed Outlet          store 1    no manager  INACTIVE
+
+   Remaining branches 1005-1020 hang off the seed stores. 1019 and 1020 are
+   inactive and have no manager.
+
+ Branch insertion note: branches.manager_id and users.branch_id reference each
+ other, so the SQL inserts branches with a NULL manager and backfills
+ manager_id in a follow-up UPDATE (section 05b of the script).
+
+================================================================================
+ 4. PRODUCTS, INVENTORY AND STOCK
+================================================================================
+
+ Every product's total_stock and branch_count is derived from the seeded
+ inventory rows, and the SQL file's check #1 confirms they agree exactly.
+
+  id    SKU               Name                              Branches  Stock
+  -----  ----------------  --------------------------------  --------  -----
+  1001  SEED-SKU-1001     Coca-Cola Soft Drink 750ml        2         155
+  1002  SEED-SKU-1002     Pepsi Max Soft Drink 750ml         2          80
+  1003  SEED-SKU-1003     Red Bull Energy Drink 250ml        2         108
+  1004  SEED-SKU-1004     Nestle Milo Powder 400g            2          84
+  1005  SEED-SKU-1005     PRAN Mango Juice 1L               1         108
+  1006  SEED-SKU-1006     Square Potato Chips 40g           1          95
+  1007  SEED-SKU-1007     Rownd Chanachur 100g              1          40
+  1008  SEED-SKU-1008     Aarong Full Cream Milk Powder 900g 1          72
+  1009  SEED-SKU-1009     Marico Shine Hair Oil 150ml       1          15
+  1010  SEED-SKU-1010     Pepsodent Toothpaste 200g         1          62
+  1011  SEED-SKU-1011     Lux Beauty Soap 100g              1           5  <- LOW
+  1012  SEED-SKU-1012     Dettol Antibacterial Soap 100g    1           5  <- LOW
+  1013  SEED-SKU-1013     Savlon Hand Wash 250ml            1          30
+  1014  SEED-SKU-1014     Vivo Y21 Smartphone 128GB         1           0  <- OUT
+  1015  SEED-SKU-1015     Realme Buds Wireless Earbuds      1           0  <- OUT
+  1016  SEED-SKU-1016     Samsung 64GB USB Flash Drive      1          55
+  1017  SEED-SKU-1017     A4 Notebook 200 Pages             0           0  (no brand)
+  1018  SEED-SKU-1018     Ballpoint Pen Box of 12           0           0  (no brand)
+  1019  SEED-SKU-1019     Discontinued Wireless Mouse        0           0  status=discontinued
+  1020  SEED-SKU-1020     Seasonal Gift Hamper               0           0  status=inactive
+
+ LOW STOCK / OUT OF STOCK to test the reorder engine
+   The inventory report flags a row as out_of_stock when qty = 0, and as
+   low_stock when qty <= reorder_level (and reorder_level > 0). Six of the
+   seeded inventory rows trip one of those conditions:
+
+     SKU               Product  Qty  min_stock  reorder_level  Flag
+     ----------------  -------  ---  ---------  -------------  ----------
+     SEED-SKU-1007       1007    40        25             60  LOW
+     SEED-SKU-1009       1009    15        12             25  LOW
+     SEED-SKU-1011       1011     5        30             80  LOW
+     SEED-SKU-1012       1012     5        30             80  LOW
+     SEED-SKU-1014       1014     0         3              6  OUT
+     SEED-SKU-1015       1015     0         4              8  OUT
+
+   Note that 1011 and 1012 are the extreme cases (5 units against a reorder
+   level of 80) and 1014 / 1015 are hard zero, so they make the clearest
+   demonstration. Across the whole database the inventory report currently
+   reports 25 products, 918 units, 206111.00 total value, 6 out_of_stock and
+   9 low_stock (those totals include the 5 pre-existing products as well).
+
+   Products 1019 (discontinued) and 1020 (inactive) should be hidden from
+   product lists and the storefront catalog.
+
+ PRODUCT IMAGES
+   Each product points at assets/images/products/seed-NN.svg (NN matches the
+   product id). The SVG placeholders ship with this seed set, so no broken
+   images appear in the product list, POS, storefront catalog or cart.
+
+ stock_logs CAVEAT (important)
+   stock_logs has only 20 rows, one per movement type, so it is a REPRESENTATIVE
+   SAMPLE of activity, not a full audit ledger. Do NOT expect
+   SUM(in) - SUM(out) to equal inventory.qty. The movements cover:
+     in, out, adjustment, damage, return, transfer
+   plus manual_issue and sale_return reference types.
+   Every 'in'/'out' row DOES reference a real document that actually contains
+   that product at that quantity, and no movement exists for the held or
+   cancelled sales - both are enforced by SQL checks #8 and #9.
+   Notably: sale 1008 is HELD, so it correctly has no stock movement at all;
+   the 'out' row near it points at sale 1009 instead.
+
+================================================================================
+ 5. PURCHASING
+================================================================================
+
+ All 5 purchase statuses and all 4 payment_status values are represented, and
+ the SQL check #2 confirms purchase_payments sums to purchases.paid exactly.
+
+  id    PO number                 Supplier  Status      Paid     Due
+  -----  ------------------------  --------  ----------  -------  ------
+  1001  SEED-PO-20260601-0001     1001      received    5280.00  0.00
+  1002  SEED-PO-20260604-0002     1002      received    3960.00  0.00
+  1003  SEED-PO-20260608-0003     1004      approved    4752.00  4752.00  partial
+  1004  SEED-PO-20260612-0004     1001      received    9250.00  0.00
+  1005  SEED-PO-20260616-0005     1003      pending    30030.00  0.00
+  1006  SEED-PO-20260620-0006     1008      received    8448.00  0.00
+  1007  SEED-PO-20260624-0007     1009      pending     2000.00  10320.00 partial
+  1008  SEED-PO-20260628-0008     1007      received   27115.00  0.00
+  1009  SEED-PO-20260702-0009     1005      approved   29700.00  0.00
+  1010  SEED-PO-20260706-0010     1005      received  113520.00  0.00
+  1011  SEED-PO-20260710-0011     1010      received   94710.00  0.00
+  1012  SEED-PO-20260714-0012     1004      pending     5000.00  13260.00 partial
+  1013  SEED-PO-20260718-0013     1011      received   10032.00  0.00
+  1014  SEED-PO-20260722-0014     1012      received       0.00  4070.00  pending
+  1015  SEED-PO-20260726-0015     1013      received    3168.00  0.00
+ 1016  SEED-PO-20260730-0016     1016      cancelled       0.00  0.00    pending
+ 1017  SEED-PO-20260803-0017     1014      draft       2250.00 2250.00  pending
+ 1018  SEED-PO-20260807-0018     1015      draft       1800.00 1800.00  pending
+ 1019  SEED-PO-20260811-0019     1017      draft          0.00  0.00    pending
+ 1020  SEED-PO-20260815-0020     1018      draft          0.00  0.00    pending
+
+ Every purchase with a non-zero subtotal has at least one line, and
+ SUM(purchase_items.total) equals purchases.subtotal for all 20 rows (SQL
+ check #5b). purchases.total = subtotal + tax and due = total - paid also hold
+ for every row (check #5c).
+
+ Deliberate edge cases:
+   - 1004 has tax = 0 (tax-exempt resale certificate on file) while its
+     purchase_items unit_cost is the full amount. Good for testing 0% tax.
+   - 1002 was paid in two part payments (2000.00 cash + 1960.00 card).
+   - 1008, 1011 and 1005 carry two lines each; the rest carry one.
+   - 1011 was paid in three instalments (25000 + 25000 + 44710).
+   - 1013 was paid by cheque (CHQ-0014).
+   - 1014 is received but UNPAID - exercises the "goods in, invoice due" path.
+   - 1016 is cancelled and intentionally has NO line items.
+   - 1017 is a draft with one line (chanachur, 2250.00) - still editable.
+   - 1018 is a draft with one line (chips, 1800.00) - use it to test the
+     PO edit / add-items flow.
+   - 1019 and 1020 are empty drafts (0.00, no lines) for testing PO creation
+     from scratch.
+   - 1003 and 1009 are approved but NOT received (their purchase_items
+     received_qty = 0), which is what the "receive goods" screen should show.
+   - 1005, 1007 and 1012 are pending and partially paid.
+
+ Payment methods present in purchase_payments: cash, card, bank_transfer, cheque.
+
+================================================================================
+ 5b. SUPPLIER (PURCHASE) RETURNS
+================================================================================
+
+ The 20 supplier returns live in sections 38-40 (20 headers + 20 line + 15
+ payment rows) and cover every awkward money case Phase 14 must handle. Return
+ numbers use the SEED-PRET- prefix. The money always comes from the source
+ purchase_items row (never from the browser), applies credit_total = subtotal +
+ tax (check 18), and only CREDITED returns write a payment row (check 13d/19c).
+
+  id    Return no          PO    Supplier  Qty Status     Credit    applied/bal
+  ----- ------------------ ----- --------  --- ---------- --------- ------------
+  1001  SEED-PRET-1001     1001  1001      10  credited    528.00   0.00 / 528.00
+  1002  SEED-PRET-1002     1002  1002      20  credited    396.00   0.00 / 396.00
+  1003  SEED-PRET-1003     1004  1001       5  credited    925.00   0.00 / 925.00
+  1004  SEED-PRET-1004     1006  1008       6  credited    844.80   0.00 / 844.80
+  1005  SEED-PRET-1005     1008  1007       4  credited    726.00   0.00 / 726.00
+  1006  SEED-PRET-1006     1008  1007       6  credited    924.00   0.00 / 924.00
+  1007  SEED-PRET-1007     1010  1005       1  credited  18920.00   0.00/18920.00
+  1008  SEED-PRET-1008     1011  1010       3  credited   7095.00   0.00/7095.00
+  1009  SEED-PRET-1009     1011  1010       4  credited   4752.00   0.00/4752.00
+  1010  SEED-PRET-1010     1013  1011       2  credited   1672.00   0.00/1672.00
+  1011  SEED-PRET-1011     1014  1012       4  credited    814.00 814.00 / 0.00
+  1012  SEED-PRET-1012     1003  1004      66  credited   5227.20 4752.00/475.20
+  1013  SEED-PRET-1013     1013  1011       3  requested  2508.00   0.00 / 0.00
+  1014  SEED-PRET-1014     1002  1002       5  rejected     99.00   0.00 / 0.00
+  1015  SEED-PRET-1015     1002  1002       2  received     39.60   0.00 / 0.00
+  1016  SEED-PRET-1016     1006  1008      15  received   2112.00   0.00 / 0.00
+  1017  SEED-PRET-1017     1006  1008       5  cancelled   704.00   0.00 / 0.00
+  1018  SEED-PRET-1018     1013  1011       2  credited   1672.00   0.00/1672.00
+  1019  SEED-PRET-1019     1004  1001       3  credited    555.00   0.00 / 555.00
+  1020  SEED-PRET-1020     1001  1001      90  credited   4752.00   0.00/4752.00
+
+ The awkward cases to test:
+   - 1011 credit is FULLY absorbed by PO 1014's unpaid due (4070.00 -> 3256.00)
+     and nothing overflows to the supplier balance.
+   - 1012 is the SPLIT credit: 66 units of the approved PO 1003 / item 1003
+     line (legacy received_qty = 0 in the purchase seed - the credit state here
+     is the source of truth). 4752.00 wipes the PO's due and 475.20 overflows
+     into supplier 1004's balance.
+   - 1013 is requested by seed.branch@ (branch 3) on PO 1013 and needs
+     approval - with purchase_return_require_approval = 1 this is what a fresh
+     branch-manager return looks like.
+   - 1014 is rejected with an admin_note explaining the supplier's reason.
+   - 1015 is a PARTIAL return (2 of the received units) - the returnable guard
+     still shows the remainder.
+   - 1016 is received (goods shipped back, stock already gone via stock_logs
+     1037), but not yet credited - the "Receive then Credit" flow.
+   - 1017 was received then VOIDED: returned_qty freed, stock restored via the
+     stock_logs 1041 'purchase_return_void' IN row, and no credit payment
+     exists (it is 'cancelled', the void status).
+   - 1018 carries the three purchase photo rows (1021-1023) in return_photos.
+   - 1019 credits an OVERPAID PO (1004) - leaves a 555.00 supplier balance.
+   - 1020 is the CEILING CLAMP return on PO 1001: 4752.00 + the earlier 528.00
+     (return 1001) = 5280.00, exactly the PO total, so nothing further is
+     returnable on that PO.
+
+ suppliers.balance is DERIVED from the credited returns (the to_balance column
+ summed per supplier): Sunrise 6760.00, Blue Ocean 396.00, Bengal FMCG 475.20,
+ Star Electronics 18920.00, Silver Fashion 1650.00, Metro Pharma 844.80, Canton
+ Electronics 11847.00, Meghna 3344.00, everyone else 0.00 (check 19/19g).
+ purchase_items.returned_qty matches the received+credited tally (check 19f):
+ 1001=100, 1002=22, 1003=66, 1004=8, 1007=21, 1009=4, 1010=6, 1012=1, 1013=3,
+ 1014=4, 1016=4 and 1017=4.
+
+ Return methods mix credit_note (the default), bank_transfer (1007, 1019) and
+ cash (1008). The purchase_return stock_logs rows (1024-1040) are the OUT
+ movements recordPurchaseReturn writes; they live outside the count window on
+ purpose so stock_logs still reports 20 in check 1.
+
+================================================================================
+ 6. SALES / POS
+================================================================================
+
+ 20 sales spread over 2026-07-31 to 2026-09-27 so the date-range filters and
+ dashboard charts have a real spread to work with. The return statuses are the
+ Phase-13 end state (section 7b drives them), so the split is 7 completed,
+ 1 held, 1 cancelled, 7 returned, 4 partially_returned. SQL check #3 confirms
+ sale_payments sums to sales.grand_total (excluding the two documented
+ exceptions below).
+
+ id    Invoice no                 Customer  Status             Total     Method
+ -----  -------------------------  --------  -----------------  ---------  ------
+ 1001  SEED-INV-20260731-0001     1001      returned            214.50   cash
+ 1002  SEED-INV-20260803-0002     1002      partially_returned  330.00   card
+ 1003  SEED-INV-20260806-0003     1003      partially_returned  270.00   mobile
+ 1004  SEED-INV-20260810-0004     1004      returned            198.00   cash   * no payment row
+ 1005  SEED-INV-20260814-0005     1005      completed           440.00   card
+ 1006  SEED-INV-20260818-0006     1006      partially_returned  627.00   cash
+ 1007  SEED-INV-20260822-0007     1009      returned            165.00   mobile
+ 1008  SEED-INV-20260826-0008     1004      held                467.00   card   * no payment row
+ 1009  SEED-INV-20260830-0009     1010      returned            550.00   cash
+ 1010  SEED-INV-20260903-0010     1011      returned            633.60   mobile
+ 1011  SEED-INV-20260906-0011     1012      completed           220.00   card
+ 1012  SEED-INV-20260909-0012     1014      completed         19800.00   card
+ 1013  SEED-INV-20260912-0013     1003      completed          2475.00   card
+ 1014  SEED-INV-20260914-0014     1004      partially_returned 1056.00   cash
+ 1015  SEED-INV-20260916-0015     1005      completed           935.00   card
+ 1016  SEED-INV-20260918-0016     1007      completed          5280.00   card
+ 1017  SEED-INV-20260920-0017     1005      returned            275.00   mixed
+ 1018  SEED-INV-20260922-0018     1006      completed           244.60   mixed
+ 1019  SEED-INV-20260925-0019     1008      cancelled           385.00   cash
+ 1020  SEED-INV-20260927-0020     1009      returned            715.00   mobile
+
+ * Sale 1004 (returned, legacy pre-Phase-13 status) and sale 1008 (held)
+   intentionally have NO sale_payments row. A held sale is by definition never
+   paid, and the returned sale was settled against the customer account rather
+   than a payment row. This is why the verification query excludes ids 1004
+   and 1008. The 7 returned sales (1001, 1007, 1009, 1010, 1017, 1020) were
+   fully refunded - their money is returned in sale_return_payments, NOT in a
+   sale_payments row (section 7b explains the ledger split).
+
+ Completed sales (7): 1005, 1011, 1012, 1013, 1015, 1016, 1018.
+ Returned sales (7):  1001, 1004, 1007, 1009, 1010, 1017, 1020.
+ Partially returned (4): 1002, 1003, 1006, 1014.
+
+ Mixed-payment sales (test the split-payment UI):
+   1017 -> sale_payments 1015 (150.00 cash) + 1016 (125.00 card) = 275.00
+   1018 -> sale_payments 1017 (104.60 mobile) + 1018 (140.00 card) = 244.60
+
+ Discounts and shipping are varied on purpose:
+   - order-level discount on 1002, 1004, 1005, 1007, 1009, 1011, 1013, 1016,
+     1017, 1019, 1020
+   - shipping charges on 1003 (50), 1008 (60), 1018 (40), 1020 (55)
+   - sale_items carry line-level discounts on sales 1004, 1012, 1015, 1019
+   Following the app's own logic in classes/Sale.php:
+     subtotal  = SUM(sale_items.total)  (already net of line discounts)
+     tax       = (subtotal - discount) * tax_rate / 100
+     grand     = subtotal - discount + tax + shipping
+   The seed honours that exact formula (check #4 and #6b in the SQL file).
+
+ INVOICES
+   invoices 1001-1020 map 1:1 to sales 1001-1020. The qr_code column holds the
+   same JSON payload classes/Invoice.php generates:
+     {"invoice":"SEED-INV-...","total":214.50,"date":"2026-07-31 10:12:00"}
+   Invoices 1008 (held) and 1019 (cancelled) have pdf_path = NULL to test the
+   "no PDF generated yet" path.
+
+================================================================================
+ 7. STOREFRONT
+================================================================================
+
+ CUSTOMERS  (20 rows: 5 VIP, 1 inactive, 2 walk-in style records)
+   - is_vip = 1 on 1001, 1002, 1005, 1014, 1019
+   - Non-zero running balance (customers.balance): 1001 (1250.00), 1003 (340.50),
+     1006 (75.00), 1009 (2150.00), 1011 (90.00), 1014 (480.00)
+   - loyalty_points span 0 (1018) to 5000 (1019)
+   - 1008 "Tanvir Ahmed (Walk-in)" has no address, no phone and no email
+   - 1020 "Walk-in Cash Customer" has no address and no email
+   - 1018 "Test Customer - Inactive" is status = inactive
+   - 1019 is a VIP with notes = NULL (tests the null-notes rendering path)
+   - membership_id is SEED-MEM-1001 .. SEED-MEM-1020
+
+  ORDERS  (all 7 storefront statuses present)
+pending      1016, 1017                        (2)
+ confirmed    1013                              (1)
+ processing   1011, 1012, 1018                  (3)
+ shipped      1009, 1010                        (2)
+ delivered    1001-1006, 1008, 1019, 1020       (9)
+ cancelled    1014, 1015                        (2)
+ returned     1007                              (1)
+
+   Order 1008 is marked DELIVERED (2026-09-01) rather than shipped: the Phase-13
+   rules only allow an online return against a delivered order, and return 1019
+   cancels a defective flash drive out of that order.
+
+   Payment methods: cash, card, mobile, cod.
+   Two orders are POS-originated (is_pos = 1) and mirror a seeded sale exactly -
+   same customer, same grand_total, and the same product/qty in order_items:
+     1019 -> sale 1015  (customer 1005, 935.00, delivered)
+     1020 -> sale 1019  (customer 1008, 385.00, cancelled)
+   Both are recorded against user 1004 (seed.cashier@), because the storefront
+   order list filters on orders.user_id. Log in as seed.cashier@ to see them in
+   the storefront order history, and open the matching sale in the POS to confirm
+   the two sides agree. Order 1020 also exercises the null-address path
+   (customer 1008 is a walk-in with no address or phone).
+
+   Coupon usage across orders: SEEDWELCOME20 (1002, 1016), SEEDBEVER5 (1005),
+   SEEDCARE15 (1006). The discount column always equals the coupon's computed
+   value, and tax/grand_total follow the app's formula.
+
+ REVIEWS  (all 3 statuses)
+   approved  16 rows
+   pending   1006 ("Chips are okay"), 1019 ("Stopped working in a month")
+   rejected  1009 ("Leaked in the bag"), 1017 ("Pages came loose")
+   Ratings span 1 to 5.
+
+ WISHLIST
+   20 rows spread across 5 customer accounts: 1005 (4), 1012 (4), 1014 (3),
+   1016 (4), 1017 (5). unique (user_id, product_id) is respected.
+
+ CARTS
+   cart 1001-1020 is one cart per seeded user. Only 5 of them have items:
+     cart 1005 (user 1005, seed.customer@) -> 5 items, est. 1030.00
+       products 1001 x2, 1003 x1, 1006 x3, 1010 x1, 1013 x2
+     cart 1006 -> 5 items (products 1002, 1007, 1008, 1009, 1011)
+     cart 1012 -> 5 items (products 1004, 1012, 1013, 1015, 1016)
+     cart 1014 -> 3 items (products 1003, 1005, 1014)
+     cart 1016 -> 2 items (products 1001, 1006)
+   The other 15 carts are intentionally EMPTY, representing cleared or
+   abandoned carts. Cart 1005 is the one to use for checkout tests: at 1030.00
+   it clears the 500.00 minimum of SEEDWELCOME20 (20% off = 206.00).
+   NOTE: cart.user_id has a UNIQUE key, so the seed does NOT add a cart for the
+   pre-existing live user 5 (who already owns cart id 1).
+
+ COUPONS  (20 rows; 14 percent + 6 fixed, all codes SEED_-prefixed so they
+           cannot clash with any live data)
+   percent  1001, 1002, 1005, 1006, 1007, 1009, 1012, 1013, 1014, 1015,
+            1016, 1017, 1018, 1020
+   fixed    1003, 1004, 1008, 1010, 1011, 1019
+   Edge cases to test (status is deliberately independent of the dates, so
+   each one isolates a different rejection rule):
+     1015 SEEDEXPIRED10   10%  expires 2026-02-01, 0 uses   status inactive
+     1013 SEEDEID30       30%  Eid window 2026-03-01..04-15  status inactive
+     1014 SEEDNEWYEAR30   30%  New Year 2026-01-01..01-31     status inactive
+     1020 SEEDDISABLED50  50%  still in date range             status inactive
+     1017 SEEDFUTURE20    20%  starts 2027-01-01, status active
+                          -> a coupon whose window has not opened yet
+     1016 SEEDEXHAUSTED   40%  used_count 5 == max_uses 5
+                          -> rejected on the "limit reached" rule
+     1018 SEEDNOEXPIRY18  18%  expires_at IS NULL (never expires)
+     1019 SEEDTESTONLY    fixed 10.00, min_order 100 (smallest minimum)
+   Live coupons worth exercising alongside the seeded ones:
+     SEEDWELCOME20  20% off, min order  500.00, 3 of 100 used  (orders 1002, 1016)
+     SEEDFLAT250    250.00 off, min order 2000.00, 12 of 150
+     SEEDFREESHIP   fixed 60.00 off, min order 0.00 (no minimum)
+
+   Coupons are only ever validated in the storefront checkout
+   (Storefront::validateCoupon / getValidCoupons in classes/Storefront.php) -
+   there is no admin coupons page or API in this build, so they are tested by
+   applying them in the cart. A coupon is offered when
+       status = 'active'
+       AND (max_uses = 0 OR used_count < max_uses)
+       AND (expires_at IS NULL OR expires_at > NOW())
+       AND (starts_at IS NULL OR starts_at <= NOW())
+   As of 2026-09-28 that makes 14 of the 20 seeded coupons selectable
+   (1011, 1004, 1008, 1003, 1010, 1002, 1009, 1001, 1018, 1007, 1012, 1006,
+   1019, 1005 - highest value first). The other 6 are correctly filtered out:
+   1013/1014/1015/1020 (inactive), 1016 (exhausted, 5 of 5) and 1017 (future).
+   Because the window is time-based, re-check this list if you test much later
+   than 2026-12-31, when the remaining active coupons will start expiring.
+
+ BANNERS  - ALL 20 ARE INACTIVE ON PURPOSE
+   There is no admin UI for banners, and the live landing page is driven by
+   the 2 pre-existing ACTIVE banners. Keeping the seeded banners inactive means
+   the storefront landing page looks exactly as it did before, so you can test
+   the hero slider deliberately:
+     UPDATE banners SET status='active' WHERE id IN (1001,1002);
+   All three enum positions are covered: hero 1001-1010 (10),
+   mid 1011-1017 (7), bottom 1018-1020 (3).
+
+PRODUCT GALLERY
+   20 rows, one extra angle per product, pointing at the same SVG placeholders.
+
+ ================================================================================
+  7b. RETURNS & REFUNDS  (Phase-13)
+ ================================================================================
+
+  Money always follows classes/SaleReturn.php: a return is a document that
+  references a sale (POS) or an order (online) and never mutates source totals.
+  The reversed shares discount/tax/shipping are stored on the return itself, so
+   refund_total = subtotal - discount + tax + shipping holds EXACTLY, and every
+  refund is capped (refunds may never exceed what the source took in).
+
+  RETURN STATUS SPLIT  (20 rows, every status represented)
+    refunded  12: 1001 1002 1006 1007 1008 1009 1010 1011 1012 1015 1017 1020
+    requested  4: 1004 1005 1013 1019
+    rejected   2: 1003 1014
+    approved   1: 1016          (waiting in the bin, nothing received yet)
+    cancelled  1: 1018          (VOIDED as a duplicate entry)
+
+  SCENARIO GUIDE  (use these in the returns screen)
+    POS immediate refund (loss):  1001  soft drinks, lids dented -> restock 0,
+      credit note written off. 214.50 back, 21 loyalty points clawed back.
+    POS partial qty refund:       1002  half-consumed Pepsi pack returned; only
+      1 of 5 units comes back. 66.00 refunded, 6 points clawed back.
+    POS needs-approval refund:    1016  approved but not yet received - use the
+      Receive button next, then Refund.
+    POS voided/cancelled:         1018  wrong return keyed in error, VOIDED; its
+      sale line tally reverted to 0 (sale 1018 still shows completed).
+    POS restock vs write-off:     1011  3 crates back; 2 sellable (2 stock_logs
+      restock rows), 1 damaged (no restock). Follow on product 1011 in
+      Inventory -> stock history.
+    POS damaged-no-restock:       1017, 1009, 1007, 1012 (single unit back).
+    POS ceiling clamp (2 refunds on one sale):
+      Sale 1020 (715.00) has refund 1008 (476.67) AND refund 1020 (238.33);
+      the second refund stops exactly at the remaining 238.33 - SQL check #15b.
+    Online requested (no admin yet):  1004, 1005, 1013, 1019 - use the Approve /
+      Reject buttons; 1019 is the photo case (5 evidence photos uploaded).
+    Online rejected:              1003  customer never returned goods;
+      1014  damaged at delivery, refund declined, replacement issued. Both carry
+      an admin_note you can read in the view screen.
+    Online full refund:           1015  defective milk powder, card refund
+      832.15 back to the original card (REFMOB/REFCARD rows).
+
+  CUSTOMER/REQUESTER MAPPING
+    requesters are storefront users 1005/1016 (they made the original orders);
+    online returns resolve their customer through orders.customer_id (1001 has
+    three orders -> three returns; the other online returns record NULL walk-in
+    customers exactly like their orders do).
+    POS returns are raised and approved by the counter staff user 10 and carry
+    requested_by = approved_by = 10 for a complete audit timeline.
+    Admin approvals/rejections are recorded as user 1 (seed.admin@).
+
+  PAYMENTS LEDGER (sale_return_payments, 12 rows - only REFUNDED returns pay)
+    The 8 outstanding returns (requested/approved/rejected/cancelled) have no
+    refund row on purpose. Methods match the original tender: cash refunds out
+    of the till, card/mobile refunds carry REFCARD-*/REFMOB-* reference codes.
+    Refund money never re-enters sale_payments - section 6 explains why the
+    returned sales keep their original paid figures.
+
+  LOYALTY CLAW-BACKS
+    A POS refund reverses loyalty in step: 1001->21, 1002->6, 1006->52,
+    1007->16, 1008->47, 1009->31, 1010->63, 1011->55, 1012->3, 1017->27,
+    1020->23. Online refunds (1003-1005, 1013-1015, 1019) reverse nothing -
+    online sales earn no points. The value is floor(grand_total/10) scaled by
+    refund_total/grand_total; 0 when the refund is under the points threshold.
+
+  STOCK
+    Receive() decides restock: sellable units get a stock_logs 'sale_return'
+    row (1018, 1021-1023); damaged units get none. Check #16 aggregates these
+    per (return, product) and must return zero mismatches.
+
+ ================================================================================
+  8. SETTINGS, NOTIFICATIONS, ACTIVITY LOGS
+ ================================================================================
+
+ SETTINGS  (all keys are SEED_ prefixed, so none of the 13 live settings such
+            as company_name, tax_rate, currency or theme are touched)
+   general       1001, 1002, 1003, 1009, 1012, 1013, 1014, 1019, 1020
+   notifications 1004
+   security      1005, 1006, 1007
+   pos           1008
+   inventory     1010, 1011
+   storefront    1015, 1016, 1017, 1018
+   Keys and values:
+     1001 SEED_storefront_enabled           1
+     1002 SEED_storefront_currency          BDT
+     1003 SEED_default_tax_rate             10        (matches the live tax_rate)
+     1004 SEED_low_stock_alert_email        inventory@ezsimbs.test
+     1005 SEED_login_max_attempts           5
+     1006 SEED_login_lockout_minutes        15        (matches users 1019/1020)
+     1007 SEED_session_lifetime_minutes     60
+     1008 SEED_pos_receipt_footer           Thank you for shopping with EZ SIMBS!
+     1009 SEED_invoice_terms                Payment due within 15 days of invoice date.
+     1010 SEED_barcode_prefix               SEED       (matches the 880100000#### codes)
+     1011 SEED_sku_prefix                   SEED-SKU-  (matches every seeded SKU)
+     1012 SEED_invoice_prefix               SEED-INV-  (matches every seeded invoice)
+     1013 SEED_po_prefix                    SEED-PO-   (matches every seeded PO)
+     1014 SEED_order_prefix                 SEED-ORD-  (matches every seeded order)
+     1015 SEED_loyalty_points_per_taka      1
+     1016 SEED_loyalty_min_redeem           500
+     1017 SEED_free_shipping_threshold       2000
+     1018 SEED_default_shipping_fee         60        (matches sales 1008 shipping 60)
+     1019 SEED_test_mode                    1
+     1020 SEED_support_email                support@ezsimbs.test
+   Every seeded document number is internally consistent with its prefix
+   setting, so a test that reads SEED_po_prefix and looks for POs will find them.
+
+ NOTIFICATIONS  (20 rows, all 4 types, read and unread, relative links only)
+   type=info      1006, 1009, 1012, 1014, 1017                    (5)
+   type=warning   1001, 1002, 1008, 1010, 1018, 1020             (6)
+   type=danger    1003, 1005                                      (2)
+   type=success   1004, 1007, 1011, 1013, 1015, 1016, 1019        (7)
+   Delivered to a mix of admin (1001-1003), managers (1002, 1006, 1007, 1008)
+   and customers (1005, 1011, 1012). Links are relative pages
+   (inventory.php, purchases.php, orders.php, ...), never absolute URLs.
+
+   Notifications 1001-1003 are unread low/out-of-stock alerts for the admin,
+   which is what the reorder notification flow should look like.
+
+ ACTIVITY LOGS  (20 rows)
+   Login events (1001-1005), sale lifecycle (1006-1010), purchase lifecycle
+   (1011-1014), stock events (1015-1017), product change (1018) and
+   storefront events (1019-1020). Each row carries ip_address, browser and
+   before/after values in old_value / new_value.
+
+================================================================================
+ 9. SUGGESTED TEST WALKTHROUGHS
+================================================================================
+
+ A. Role-based access control
+    Log in as each of the 5 role accounts and confirm the sidebar/pages match
+    the role. Then log in as inactive.user@ and locked.user@ to confirm the
+    login refusals, and recovery.user@ to confirm a stale lockout does not
+    block a valid login.
+
+ B. Inventory and reorder
+    Open Inventory. Six seeded rows are flagged: 1007, 1009, 1011, 1012 low and
+    1014, 1015 out of stock. Trigger the reorder check and confirm it proposes
+    POs. Open the stock history for product 1001 (2 branches) and 1003
+    (adjustment + damage rows) to confirm all movement types render.
+
+ C. Purchase lifecycle
+    Open a pending PO (1005, 1007 or 1012) and walk it pending -> approved ->
+    received. Compare received_qty before and after. PO 1003 and 1009 are
+    approved with received_qty = 0, ready for the receive step. PO 1014 is
+    received but unpaid, so the payment screen should still show 4070.00 due.
+
+ D. POS and invoicing
+    Sell a product in the POS as seed.cashier@, then compare the new invoice
+    with a seeded one (for example SEED-INV-20260927-0020). Check the tax,
+    discount and total arithmetic match the formula in section 6, and that the
+    invoice QR payload renders the JSON described there.
+
+ E. Dashboard and reports
+    Confirm the sales chart has a spread across Jul-Sep 2026, that the sales
+    report breaks down the 20 sales by status (7 completed, 1 held, 1 cancelled,
+    7 returned, 4 partially_returned), and that the profit-loss report
+    reconciles. Confirm out_of_stock = 6 and low_stock = 9 in the inventory
+    report.
+
+ F. Storefront end to end
+    Log in as seed.customer@ezsimbs.test (customer account 1001, which owns
+    the 5-item cart 1005). The cart already holds 5 products, the wishlist has
+    4, and the order history spans delivered / shipped / processing / pending /
+    cancelled / returned. Apply coupon SEEDWELCOME20 to a cart over 500.00 and
+    confirm the discount matches the coupon rules (20%, min order 500.00), then
+    confirm an expired code such as SEEDEXPIRED10 or the exhausted
+    SEEDEXHAUSTED is rejected with a message rather than silently applied.
+
+ G. Multi-branch and multi-store
+    Sign in as admin@ezsimbs.local and confirm branches 1001-1004 appear.
+    Sign in as arif@sunrise.test to see the seed store 1001 context with its
+    branches 1005-1007 and 1018.
+
+ H. Returns & refunds lifecycle (Phase-13)
+    As seed.cashier@ezsimbs.test open sales list -> SEED-INV-20260927-0020
+    (sale 1020). It should offer a Return button only while recommendable items
+    remain: it already has two refunded returns, so the button must show the
+    remaining balance as the new refund cap. Then:
+      - Open return 1016 (approved) and click Receive, then Refund - confirm the
+        store restocks what you mark sellable and refunds exactly 528.00.
+      - Open return 1018 (cancelled) and confirm its sale 1018 still reads
+        completed - the void rolled the tally back to 0.
+      - Open return 1011 and follow product 1011 into Inventory -> stock
+        history: two 'sale_return' +in rows, no row for the write-off line C.
+    As seed.admin@ approve/reject one of the requested returns (1004/1005/
+    1013/1019); return 1019 should show its 5 evidence photos in the view
+    screen. Log in as seed.customer@ezsimbs.test (storefront) -> Orders ->
+    Order SEED-ORD-20260830-1008 and confirm the delivered order exposes a
+    Return button that will only pass for delivered orders.
+
+ I. Supplier (purchase) returns lifecycle (Phase-14)
+    As seed.admin, open Purchases -> PO 1013 (SEED-PO-20260718-0013, received).
+    Because remaining units exist and you are admin/manager/branch_manager, the
+    Return Goods button shows. Open the modal and return 2 units against a
+    reason - that is a NEW return; the seeded rows 1010/1018 on the same PO
+    show in the Suppliers Returns list with their credited totals.
+    Then walk the seeded awkward cases:
+      - Return 1013 is requested on PO 1013 by seed.branch@ (branch 3).
+        Approve it (its status becomes 'approved' - the 6th status, now live)
+        and confirm the branch-scoped list for seed.branch@ shows only
+        branch-3 returns.
+      - Return 1011: open it and confirm credit 814.00 was applied_to_due
+        (PO 1014's due drops 4070.00 -> 3256.00) with to_balance 0.00.
+      - Return 1012: confirm the split - 4752.00 to PO 1003 due, 475.20 to
+        supplier 1004 balance; then open Suppliers -> Bengal FMCG (1004) and
+        see Balance 475.20.
+      - Return 1015: confirm it is received but not yet credited - hit Credit
+        and see 39.60 settle against PO 1002 (already fully paid) so it all
+        overflows to supplier 1002's balance.
+      - Return 1016: same - received, credit it for 2112.00.
+      - Return 1017: cancelled/voided - its stock row 1041 restored the 5
+        units; product 1009 (hair oil) stock history shows the +5 restore,
+        and supplier 1008's balance is only 844.80 (return 1004), not the
+        704.00 of the voided document.
+      - Return 1018: the three evidence photos (1021-1023) render in its view.
+      - Return 1014: the admin_note text is visible, and return 1015 on the
+        same PO line proves the rejected units did NOT consume returnable
+        stock.
+      - Return 1020: open PO 1001 and confirm nothing more is returnable
+        (1001's 100 returned units hit the ceiling exactly).
+    Cross-check the Suppliers page for Sunrise (6760.00 balance) and the
+    Reports -> Supplier Returns tab: total returns, credited total, open
+    returns and balance should match section 5b, and the By Reason / By
+    Supplier tables should be populated.
+
+================================================================================
+ 10. VERIFICATION
+================================================================================
+
+The bottom of ez_simbs_seed_data.sql contains the checks that were used to
+ validate this data set. All of them currently return empty / expected-count
+ results:
+
+    1. every table has 20 rows in the 1001-1020 range - with the intended
+       exceptions reported inline: sale_return_payments 12, sale_return_items
+       20 (1021/1022 are windowed out), all others 20
+    2. products.total_stock and branch_count match the inventory aggregates
+    3. purchase_payments sums to purchases.paid
+    4. sale_payments sums to sales.grand_total (excluding held 1008 and
+       returned 1004, which carry no payment row by design)
+    5.  sales.grand_total = subtotal - discount + tax + shipping
+    5b. purchases.subtotal = SUM(purchase_items.total), and no non-zero PO
+       is missing its lines
+    5c. purchases.total = subtotal + tax and due = total - paid
+    5d. purchase_items.total = qty * unit_cost
+    6a. orders.subtotal equals the gross of order_items.total
+    6b. sales.subtotal equals the sum of sale_items.total
+    6.  orders.grand_total = subtotal - discount + tax + shipping
+    7.  foreign keys resolve for every seeded child row
+    8.  every stock log references a document that really contains that
+       product - sale_return logs resolve through the return header to the
+       mirrored sale line
+    9.  no stock movement exists for the held (1008) or cancelled (1019) sale,
+       and no return exists against either
+    10. activity_logs.resource_id points at a row that actually exists
+    11. POS-linked orders match their sale (customer + grand_total)
+    12. orders.sale_id resolves to a real sale
+    13. return FKs resolve (headers, sale/order lines, products, users, photos)
+    13b. return lines never exceed the source line qty and total = qty x price
+    13c. return.subtotal equals SUM(sale_return_items.total)
+    13d. refund rows only exist on refunded returns, and exactly match
+       refund_total
+    14. refund_total = subtotal - discount + tax + shipping (reversed shares)
+    15. no refund exceeds its source grand_total
+    15b. SUM of partial refunds per sale never exceeds grand_total (sale 1020
+       lands exactly on 715.00)
+16. restock-enabled return units equal the 'sale_return' stock_logs total,
+        aggregated per (return, product)
+    16b. every sale_return stock log pairs with a restockable item
+    17. no negative or orphaned supplier-return line (Phase 14)
+    18. supplier credit arithmetic: credit_total = subtotal + tax on every
+        return, including requested/rejected/cancelled where it must still
+        hold (Phase 14)
+    19. no supplier runs a negative balance (Phase 14)
+    19b. the aggregated non-cancelled return tally per PO line never exceeds
+        received_qty (the over-return guard)
+    19c. only CREDITED returns have a payment row, and it equals credit_total
+    19d. return.subtotal equals SUM(purchase_return_items.total)
+    19e. every Phase-14 stock log (1024-1041) resolves to a live return line
+        carrying the same product
+    19f. purchase_items.returned_qty matches the received+credited line tally
+    19g. suppliers.balance equals the net of credited-return overflow
+
+ To re-run just the count check:
+
+   mysql -u aj -p ez_simbs -e "
+     SELECT 'products', COUNT(*) FROM products WHERE id BETWEEN 1001 AND 1020
+     UNION ALL SELECT 'sales', COUNT(*) FROM sales WHERE id BETWEEN 1001 AND 1020
+     UNION ALL SELECT 'sale_returns', COUNT(*) FROM sale_returns WHERE id BETWEEN 1001 AND 1020
+     UNION ALL SELECT 'sale_return_payments', COUNT(*) FROM sale_return_payments WHERE id BETWEEN 1001 AND 1012
+     UNION ALL SELECT 'purchase_returns', COUNT(*) FROM purchase_returns WHERE id BETWEEN 1001 AND 1020
+     UNION ALL SELECT 'purchase_return_items', COUNT(*) FROM purchase_return_items WHERE id BETWEEN 1001 AND 1020
+     UNION ALL SELECT 'purchase_return_payments', COUNT(*) FROM purchase_return_payments WHERE id BETWEEN 1001 AND 1015;"
+
+ REMOVING THE SEED DATA
+   Uncomment and run the REMOVE SEED DATA block at the bottom of
+   ez_simbs_seed_data.sql. It deletes the return tables first (photos,
+   payments, items, headers - both sale and purchase), then the rest, in
+   FK-safe order, and never touches pre-existing rows. stock_logs is cleared
+   through 1041 (the Phase-13 restocks 1021-1023 plus the Phase-14 return
+   rows 1024-1041), sale_items through 1022, and return_photos through 1023.
+   It does not delete the seed SVG images. On a DB that was already seeded
+   once, run this block before loading the file again. The seed file is a
+   text fixture, so REMOVE + re-import regenerates returned_qty and
+   suppliers.balance from the extended INSERTs automatically.
+
+================================================================================
+ END OF SEED DATA GUIDE
+================================================================================
